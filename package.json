@@ -1,0 +1,15 @@
+{
+  "name": "revid-sync",
+  "version": "1.0.0",
+  "description": "Sync backend for ReVid theater data (docs/SYNC-API.md in Jeffrey0117/ReVid)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --no-warnings --test \"test/*.test.mjs\""
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "license": "MIT"
+}
