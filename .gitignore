@@ -4,3 +4,7 @@ data/
 *.db
 *.db-shm
 *.db-wal
+.deploy-state.json
+.pm2-ecosystem.json
+.pkg-hash
+.pm2-*.cjs
