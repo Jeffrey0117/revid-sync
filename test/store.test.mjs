@@ -169,6 +169,52 @@ test('orphan course (folderId not on server) is stored anyway', () => {
   assert.equal(s.pull('u1', 0).data.courses[0].folderId, 'missing-folder');
 });
 
+test('more than 2000 records in one push -> TOO_LARGE (split the batch)', () => {
+  const s = mkStore();
+  const many = Array.from({ length: 2001 }, (_, i) => folder({ id: `m${i}` }));
+  assert.equal(s.push('u1', { folders: many }).code, 'TOO_LARGE');
+  assert.equal(s.pull('u1', 0).data.folders.length, 0); // nothing stored
+});
+
+test('pull is byte-budgeted: huge records page in small chunks instead of one giant response', () => {
+  const s = mkStore();
+  const big = 'data:image/png;base64,' + 'A'.repeat(400 * 1024); // ~400KB each, under the 512KB record cap
+  for (let i = 0; i < 15; i += 1) {
+    s.push('u1', { folders: [folder({ id: `big${i}`, cover: big, updatedAt: 1000 + i })] });
+  }
+  let cursor = 0;
+  let total = 0;
+  let pages = 0;
+  for (;;) {
+    const page = s.pull('u1', cursor, 1000).data;
+    assert.ok(JSON.stringify(page).length < 6 * 1024 * 1024, 'single page too large');
+    total += page.folders.length;
+    pages += 1;
+    cursor = page.cursor;
+    if (!page.hasMore) break;
+    assert.ok(pages < 50, 'paging did not converge');
+  }
+  assert.equal(total, 15); // nothing lost across the byte-budgeted pages
+  assert.ok(pages > 1, 'expected multiple pages');
+});
+
+test('bogus deletedAt: 0 is stored as data but never eaten by purge', () => {
+  const s = mkStore();
+  s.push('u1', { folders: [folder({ id: 'zero', deletedAt: 0, updatedAt: 2000 })] });
+  assert.equal(s.purge(Date.now()), 0);
+  const f = s.pull('u1', 0).data.folders[0];
+  assert.equal(f.id, 'zero');
+  assert.equal(f.deletedAt, 0); // record itself round-trips untouched
+});
+
+test('malformed nested values rejected (progress must be an object, clickPath an array)', () => {
+  const s = mkStore();
+  assert.equal(s.push('u1', { courses: [course({ progress: 'x' })] }).code, 'BAD_REQUEST');
+  assert.equal(s.push('u1', { courses: [course({ progress: [1] })] }).code, 'BAD_REQUEST');
+  assert.equal(s.push('u1', { courses: [course({ clickPath: 'nope' })] }).code, 'BAD_REQUEST');
+  assert.equal(s.push('u1', { courses: [course({ progress: null })] }).data.accepted, 1);
+});
+
 test('purge removes tombstones older than 90 days only', () => {
   const s = mkStore();
   const now = Date.now();

@@ -22,12 +22,13 @@ try {
 const PORT = Number(process.env.PORT) || 8788;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'revid-sync.db');
 const LETMEUSE_BASE_URL = (process.env.LETMEUSE_BASE_URL || 'https://letmeuse.isnowfriend.com').replace(/\/+$/, '');
+const LETMEUSE_APP_ID = process.env.LETMEUSE_APP_ID || 'app_5qXx5Wtv'; // ReVid's app (shared with RePic) — foreign-app tokens are rejected
 const CORS_ORIGIN = process.env.CORS_ORIGIN || '*';
 
 fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 
 const store = createStore(DB_PATH);
-const { verifyToken } = createVerifier({ baseUrl: LETMEUSE_BASE_URL });
+const { verifyToken } = createVerifier({ baseUrl: LETMEUSE_BASE_URL, appId: LETMEUSE_APP_ID });
 const server = createApp({ store, verifyToken, corsOrigin: CORS_ORIGIN });
 
 // Q4: purge 90-day-old tombstones at startup and daily.
@@ -38,3 +39,14 @@ setInterval(() => store.purge(), 24 * 60 * 60 * 1000).unref();
 server.listen(PORT, () => {
   console.error(`[revid-sync] listening on :${PORT} (auth: ${LETMEUSE_BASE_URL})`);
 });
+
+const shutdown = () => {
+  server.close(() => {
+    store.close();
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(0), 5000).unref();
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+

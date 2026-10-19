@@ -34,6 +34,38 @@ test('401 from LetMeUse -> 401', async () => {
   assert.deepEqual(await v.verifyToken(jwt({})), { ok: false, status: 401 });
 });
 
+test('non-401 4xx from LetMeUse (WAF 403, 404, 429) -> 503, never a logout', async () => {
+  for (const status of [403, 404, 429]) {
+    const v = createVerifier({ baseUrl: 'http://x', fetchImpl: async () => ({ ok: false, status, json: async () => ({}) }) });
+    assert.deepEqual(await v.verifyToken(jwt({})), { ok: false, status: 503 }, `status ${status}`);
+  }
+});
+
+test('expired token -> 401 locally, LetMeUse is never called', async () => {
+  let called = 0;
+  const v = createVerifier({ baseUrl: 'http://x', fetchImpl: async () => { called += 1; } });
+  const dead = jwt({ exp: Math.floor(Date.now() / 1000) - 60 });
+  assert.deepEqual(await v.verifyToken(dead), { ok: false, status: 401 });
+  assert.deepEqual(await v.verifyToken(dead), { ok: false, status: 401 });
+  assert.equal(called, 0);
+});
+
+test('token for another LetMeUse app -> 401', async () => {
+  const v = createVerifier({
+    baseUrl: 'http://x', appId: 'app_revid',
+    fetchImpl: async () => okResponse({ id: 'usr_1', appId: 'app_other' })
+  });
+  assert.deepEqual(await v.verifyToken(jwt({ sub: 'usr_1' })), { ok: false, status: 401 });
+});
+
+test('token for the configured app -> ok', async () => {
+  const v = createVerifier({
+    baseUrl: 'http://x', appId: 'app_revid',
+    fetchImpl: async () => okResponse({ id: 'usr_1', appId: 'app_revid' })
+  });
+  assert.deepEqual(await v.verifyToken(jwt({})), { ok: true, userId: 'usr_1' });
+});
+
 test('5xx from LetMeUse -> 503, not 401', async () => {
   const v = createVerifier({ baseUrl: 'http://x', fetchImpl: async () => ({ ok: false, status: 502, json: async () => ({}) }) });
   assert.deepEqual(await v.verifyToken(jwt({})), { ok: false, status: 503 });
@@ -75,9 +107,9 @@ test('cache TTL is bounded by token exp', async () => {
   clock += 5_000;
   await v.verifyToken(t);
   assert.equal(calls, 1); // still cached
-  clock += 6_000; // past exp
-  await v.verifyToken(t);
-  assert.equal(calls, 2); // cache expired with the token
+  clock += 6_000; // past exp: rejected locally, no upstream re-verification
+  assert.deepEqual(await v.verifyToken(t), { ok: false, status: 401 });
+  assert.equal(calls, 1);
 });
 
 test('503 results are NOT cached — next request retries LetMeUse', async () => {

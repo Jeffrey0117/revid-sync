@@ -125,15 +125,34 @@ test('single record over 512KB -> 413 TOO_LARGE', async () => {
   assert.equal((await res.json()).code, 'TOO_LARGE');
 });
 
-test('body over 5MB -> 413', async () => {
+test('body over 5MB -> the client actually receives the 413, not a reset', async () => {
   const res = await fetch(base + '/v1/sync', {
     method: 'POST',
     headers: { Authorization: 'Bearer tok-alice', 'Content-Type': 'application/json' },
     body: 'x'.repeat(5 * 1024 * 1024 + 10)
-  }).catch(() => null);
-  // server destroys the socket after responding; both a 413 response and a reset are acceptable client-side,
-  // but we should normally get the 413.
-  if (res) assert.equal(res.status, 413);
+  });
+  assert.equal(res.status, 413);
+  assert.equal((await res.json()).code, 'TOO_LARGE');
+});
+
+test('pre-auth per-IP rate limit protects LetMeUse from unauthenticated floods', async () => {
+  let upstreamCalls = 0;
+  const isolated = createApp({
+    store: createStore(':memory:'),
+    verifyToken: async () => { upstreamCalls += 1; return { ok: false, status: 401 }; },
+    corsOrigin: '*'
+  });
+  const port = await listen(isolated);
+  try {
+    let last;
+    for (let i = 0; i < 121; i += 1) {
+      last = await fetch(`http://127.0.0.1:${port}/v1/me`, { headers: { Authorization: 'Bearer junk' } });
+    }
+    assert.equal(last.status, 429);
+    assert.ok(upstreamCalls <= 120, `upstream saw ${upstreamCalls} calls`);
+  } finally {
+    isolated.close();
+  }
 });
 
 test('error responses leak no internals', async () => {
